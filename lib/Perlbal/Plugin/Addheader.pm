@@ -5,7 +5,7 @@ use strict;
 
 =head1 NAME
 
-Perlbal::Plugin::Addheader - Add Headers to Perlbal webserver responses
+Perlbal::Plugin::Addheader - Add Headers to Perlbal webserver/reverse_proxy responses
 
 =head1 VERSION
 
@@ -13,14 +13,14 @@ Version 0.01
 
 =cut
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 
 =head1 Description
 
-This module allows you to add/change headers to/from perlbal responses
+This module allows you to add/change headers to/from perlbal responses.
 
-You can configure headers to be added/changed based on each service declared, although the service role has to be set to web_server
+You can configure headers to be added/changed based on each service declared, although the service role has to be set to web_server or reverse_proxy.
 
 For each header you want to add/change,  you have to specify the header content, this header content can be a set of characters or Perl code that will be evaluated for each response.
 
@@ -141,6 +141,30 @@ sub register {
         }
         return 0;
     });
+
+	$svc->register_hook('Addheader','backend_response_received', sub {
+
+        my Perlbal::HTTPHeaders $res = $_[0]->{res_headers};
+        my $service_name = $_[0]->{service}{'name'};
+        if (defined $added_headers->{$service_name}) {
+            foreach my $header (@{$added_headers->{$service_name}}) {
+                my $header_content= $header->{'header_content'};
+                if ($header_content =~/^\[\%.*\%]$/) {
+                    $header_content =~s/^\[\%//;
+                    $header_content =~s/\%\]$//;
+                    $header_content = eval($header_content);
+                    if ($@) {
+                        print "Error on eval for header '$header->{'header_name'}'\n";
+                        next;
+                    }
+                }
+                $res->header($header->{'header_name'}, $header_content);
+            }
+        }
+        return 0;
+    });
+
+
     return 0;
 }
 
@@ -154,7 +178,7 @@ sub unregister {
 sub load {
 
     Perlbal::register_global_hook('manage_command.addheader', sub {
-        my $command_regexp = qr/^addheader\s+(\w+)\s+(\w+)\s+(.*?)$/i;
+        my $command_regexp = qr/^addheader\s+(\w+)\s+([^\s]+)\s+(.*?)$/i;
         my $mc = shift->parse($command_regexp,
                               "usage: ADDHEADER <SERVICE> <HEADER_NAME> <HEADER_CONTENT>");
         my ($service, $header_name, $header_content) = $mc->args;
